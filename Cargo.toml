@@ -1,0 +1,14 @@
+[package]
+name = "grper"
+version = "0.1.0"
+authors = ["Mike MacDonald <crazymykl@gmail.com>"]
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Reader for Ken Silverman's Build engine GRP archive files"
+
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
+
+[dependencies]
+thiserror = "2"
