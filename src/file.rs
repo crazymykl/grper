@@ -7,7 +7,8 @@ use std::io::{self, Read, Seek, SeekFrom};
 /// reader: no file data is copied into memory, and sequential reads never
 /// seek. `seek` is likewise lazy (as with `std::io::BufReader`) — it only
 /// updates the proxy's position and the next read repositions the reader, so
-/// it cannot fail with an I/O error.
+/// it touches the reader not at all and only fails for a position before the
+/// entry's start.
 ///
 /// A proxy is valid for as long as it borrows the archive. Reading past the
 /// end of the file returns `Ok(0)`; if the archive is shorter than its file

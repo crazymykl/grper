@@ -39,20 +39,13 @@ struct Args {
     strict: bool,
 }
 
-/// Trampoline to [`cli_main`].
-///
-/// Marked `coverage(off)`: it only forwards to the fully testable entry point
-/// and calls `process::exit`, which cannot be exercised from a test without
-/// killing the test process.
+/// Forwards to [`cli_main`] and exits with a status code.
 fn main() {
     std::process::exit(cli_main(&std::env::args().collect::<Vec<String>>()));
 }
 
-/// Parse `args`, run the extraction, and report the result, returning the
-/// process exit code.
-///
-/// Split out from [`main`] so the whole CLI can be driven in-process from
-/// tests without reading the real environment or calling `process::exit`.
+/// Parse `args`, run the extraction, print the result to stderr on
+/// failure, and return the process exit code.
 fn cli_main(args: &[String]) -> i32 {
     match Args::try_parse_from(args) {
         Ok(args) => match run(&args.path, &args.out_dir, &args.files, args.strict) {
@@ -114,12 +107,7 @@ fn pick(names: &[&str], only: &[String]) -> Result<Selection> {
     Ok(Selection { indices, warnings })
 }
 
-/// Open `path` as a GRP archive and extract it (see [`run_with`]).
-///
-/// The archive bytes are loaded and served through a [`grper::FlakyReader`],
-/// which is a transparent pass-through with no faults configured. Reading
-/// through it keeps the production path and the fault-injection tests on a
-/// single monomorphization of [`run_with`].
+/// Load `path` and extract it (see [`run_with`]).
 fn run(path: &Path, out_dir: &Path, only: &[String], strict: bool) -> Result<()> {
     let data = std::fs::read(path).with_context(|| format!("failed to read {path:?}"))?;
     run_with(grper::FlakyReader::new(data), path, out_dir, only, strict)
@@ -605,7 +593,7 @@ mod tests {
         assert_eq!(cli_main(&args), 2);
     }
 
-    /// The error from a `pick` call, without requiring `Selection: Debug`.
+    /// The error from a `pick` call that is expected to fail.
     fn pick_err(names: &[&str], only: &[String]) -> anyhow::Error {
         match pick(names, only) {
             Ok(_) => panic!("pick was expected to fail"),

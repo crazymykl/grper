@@ -276,13 +276,11 @@ fn missing_positional_fails_with_usage() {
         .stderr(predicate::str::contains("Usage: grper <PATH>"));
 }
 
-/// Overwrite the declared size of the single entry in a one-entry archive so
-/// it claims far more data than the file actually contains.
+/// Make the single entry in a one-entry archive claim more data than it has,
+/// so opening it fails as a truncated archive.
 fn overdeclare_size(bytes: &[u8]) -> Vec<u8> {
     let mut out = bytes.to_vec();
-    // The size field is the last 4 bytes of the single 16-byte entry record,
-    // which begins right after the 16-byte header (12-byte signature +
-    // 4-byte count). Each record is 12 name bytes + 4 size bytes.
+    // 16-byte header, then the entry's 12-byte (null-padded) name, then its 4-byte size.
     let size_offset = 16 + 12;
     out[size_offset..size_offset + 4].copy_from_slice(&100u32.to_le_bytes());
     out
