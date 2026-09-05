@@ -1,4 +1,4 @@
-use std::io::{ErrorKind, Read, Seek, SeekFrom};
+use std::io::{self, ErrorKind, Read, Seek, SeekFrom, Write};
 
 use crate::error::Error;
 use crate::file::File;
@@ -173,6 +173,25 @@ impl<R: Read + Seek> Archive<R> {
                 name: name.to_owned(),
             })?;
         self.entry(index)
+    }
+
+    /// Copy the file at `index` into `writer`.
+    ///
+    /// Unlike [`entry`](Self::entry), this copies the whole file and does not
+    /// borrow it, which is what bulk extraction (and the bundled CLI) needs.
+    /// Errors from opening the entry or copying its data propagate; the
+    /// caller can compare the number of bytes written against
+    /// [`Entry::size`] to detect a truncated archive.
+    pub fn extract<W: Write>(&mut self, index: usize, writer: &mut W) -> Result<u64, Error> {
+        let (name, start, size) = {
+            let entry = self.entries.get(index).ok_or(Error::IndexOutOfBounds {
+                index,
+                len: self.entries.len(),
+            })?;
+            (entry.name.clone(), entry.offset, entry.size)
+        };
+        let mut file = File::new(&mut self.reader, name, start, size);
+        io::copy(&mut file, writer).map_err(Error::from)
     }
 }
 
@@ -447,5 +466,34 @@ mod tests {
         data.truncate(data.len() - 2);
         let err = Archive::new(FlakyReader::new(data)).unwrap_err();
         assert_matches!(err, Error::DataTruncated { .. });
+    }
+
+    #[test]
+    fn extract_should_copy_entry_data() {
+        let mut archive = Archive::new(Cursor::new(build_grp(&[
+            ("A.TXT", b"12345"),
+            ("B.CON", b""),
+        ])))
+        .unwrap();
+        let mut out = Vec::new();
+        let written = archive.extract(0, &mut out).unwrap();
+        assert_eq!(written, 5);
+        assert_eq!(out, b"12345");
+    }
+
+    #[test]
+    fn extract_should_reject_out_of_range_index() {
+        let mut archive = Archive::new(Cursor::new(build_grp(&[("A.TXT", b"1")]))).unwrap();
+        let err = archive.extract(1, &mut Vec::new()).unwrap_err();
+        assert_matches!(err, Error::IndexOutOfBounds { index: 1, len: 1 });
+    }
+
+    #[test]
+    fn extract_should_propagate_read_errors() {
+        let data = build_grp(&[("A.TXT", b"12345")]);
+        let mut archive = Archive::new(FlakyReader::new(data).failing_reads_from(32))
+            .expect("open succeeds; the failure is in the extraction read");
+        let err = archive.extract(0, &mut Vec::new()).unwrap_err();
+        assert_matches!(err, Error::Io(_));
     }
 }

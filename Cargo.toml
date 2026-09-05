@@ -6,9 +6,35 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 description = "Reader for Ken Silverman's Build engine GRP archive files"
 
+[features]
+default = ["cli"]
+cli = ["dep:anyhow", "dep:clap", "testutil"]
+# Exposes the `FlakyReader` test double (see `grper::testutil`).
+testutil = []
+
+[dev-dependencies]
+
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
 
 [dependencies]
 thiserror = "2"
+
+# CLI only — keep the library itself std + thiserror.
+[dependencies.anyhow]
+version = "1"
+optional = true
+
+[dependencies.clap]
+version = "4"
+features = ["derive"]
+optional = true
+
+[[bin]]
+name = "grper"
+required-features = ["cli"]

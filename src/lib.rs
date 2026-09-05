@@ -41,6 +41,11 @@
 //! ```
 //!
 //! See [`Archive`] for the full API.
+//!
+//! # Testing
+//!
+//! With the `testutil` feature, the [`FlakyReader`] test double is exposed so
+//! I/O error paths can be exercised without flaky hardware.
 
 #![deny(missing_docs)]
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
@@ -49,9 +54,12 @@ mod archive;
 mod error;
 mod file;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testutil"))]
 mod testutil;
 
 pub use archive::{Archive, Entry};
 pub use error::Error;
 pub use file::File;
+
+#[cfg(any(test, feature = "testutil"))]
+pub use testutil::FlakyReader;
