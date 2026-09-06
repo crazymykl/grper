@@ -1,0 +1,65 @@
+name: Cargo Build & Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_and_test:
+    name: test
+    strategy:
+      matrix:
+        toolchain:
+          - stable
+          - beta
+          - nightly
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    env:
+      NEXTEST_PROFILE: ${{ matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable' && 'ci' || 'default' }}
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: rustfmt, clippy
+      - uses: taiki-e/install-action@nextest
+      - run: cargo fmt --check
+      - run: cargo build --verbose --no-default-features
+      - run: cargo clippy -- -D clippy::all
+      - run: cargo nextest run --verbose --no-default-features
+      - run: cargo clean
+      - run: cargo build --verbose
+      - run: cargo nextest run --verbose
+      - name: Upload test results to Codecov
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable' && !cancelled() }}
+        uses: codecov/codecov-action@v5
+        with:
+          report_type: test_results
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: target/nextest/ci/junit.xml
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: taiki-e/install-action@nextest
+      - run: cargo llvm-cov nextest --branch --codecov --output-path codecov.json
+      - uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: codecov.json
+          fail_ci_if_error: true
