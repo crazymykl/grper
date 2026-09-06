@@ -91,10 +91,8 @@ impl<R: Read + Seek> Archive<R> {
         }
         let count = u32::from_le_bytes(header[12..16].try_into().unwrap()) as usize;
 
-        // File data starts right after the last table entry: the 16-byte
-        // header plus `count` 16-byte entries.
-        let mut offset = (count + 1) as u64 * ENTRY_LEN as u64;
-        let mut entries = Vec::new();
+        // The file table: `count` records of a 12-byte name + 4-byte size.
+        let mut table = Vec::with_capacity(count);
         for index in 0..count {
             let mut record = [0u8; ENTRY_LEN];
             if let Err(err) = reader.read_exact(&mut record) {
@@ -104,20 +102,33 @@ impl<R: Read + Seek> Archive<R> {
                 return Err(Error::Io(err));
             }
             let size = u32::from_le_bytes(record[12..16].try_into().unwrap()) as u64;
-            entries.push(Entry {
-                name: parse_name(&record[..12]),
-                size,
-                offset,
-            });
-            offset += size;
+            table.push((parse_name(&record[..12]), size));
         }
+
+        // File data starts right after the last table entry, so a file's
+        // offset is the data start plus the sizes of all files before it.
+        let data_start = (count + 1) as u64 * ENTRY_LEN as u64;
+        let data_end = data_start + table.iter().map(|&(_, size)| size).sum::<u64>();
+        let offsets: Vec<u64> = table
+            .iter()
+            .scan(data_start, |offset, &(_, size)| {
+                let start = *offset;
+                *offset += size;
+                Some(start)
+            })
+            .collect();
+        let entries = table
+            .into_iter()
+            .zip(offsets)
+            .map(|((name, size), offset)| Entry { name, size, offset })
+            .collect();
 
         // Trailing data beyond the declared files is ignored, but an archive
         // that ends early is corrupt.
         let end = reader.seek(SeekFrom::End(0))?;
-        if end < offset {
+        if end < data_end {
             return Err(Error::DataTruncated {
-                declared: offset,
+                declared: data_end,
                 actual: end,
             });
         }
