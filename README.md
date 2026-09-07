@@ -41,6 +41,9 @@ Extracts the files of a GRP archive to disk.
   (default: the current directory).
 - `--strict` — abort with an error instead of proceeding when any warning is
   raised. Nothing is extracted and the out dir is not created.
+- `--dry-run` — report what would be extracted without creating the out dir
+  or writing any file. Selection, warnings, and `--strict` are still applied,
+  so a `--strict --dry-run` with a case mismatch aborts the same way.
 
 Examples:
 

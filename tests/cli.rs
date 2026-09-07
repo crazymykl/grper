@@ -207,6 +207,42 @@ fn strict_mode_proceeds_when_the_case_matches() {
 }
 
 #[test]
+fn dry_run_reports_without_writing() {
+    let h = Harness::new();
+    // `--dry-run` lists what would be extracted, but the out dir is never
+    // created and no file is written.
+    Command::cargo_bin("grper")
+        .expect("binary builds")
+        .arg(&h.archive)
+        .arg("-o")
+        .arg(&h.out)
+        .arg("--dry-run")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("would extract 3 file(s)"));
+    assert!(!h.out.exists());
+}
+
+#[test]
+fn dry_run_with_strict_aborts_on_case_mismatch() {
+    let h = Harness::new();
+    // The case mismatch raises a warning; with `--strict` even a dry run
+    // aborts, leaving nothing behind.
+    Command::cargo_bin("grper")
+        .expect("binary builds")
+        .arg(&h.archive)
+        .arg("-o")
+        .arg(&h.out)
+        .arg("--strict")
+        .arg("--dry-run")
+        .arg("defs.con")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--strict mode"));
+    assert!(!h.out.exists());
+}
+
+#[test]
 fn missing_name_fails_and_names_it() {
     let h = Harness::new();
     Command::cargo_bin("grper")
