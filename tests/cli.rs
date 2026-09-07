@@ -1,3 +1,5 @@
+#![cfg(feature = "cli")]
+
 //! Black-box tests for the `grper` CLI, driven through a real subprocess with
 //! [`assert_cmd`].
 //!
@@ -7,6 +9,7 @@
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use std::env::consts::EXE_SUFFIX;
 use std::path::{Path, PathBuf};
 
 /// The number of files in the archive built by [`write_archive`].
@@ -273,7 +276,9 @@ fn missing_positional_fails_with_usage() {
         .expect("binary builds")
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("Usage: grper <PATH>"));
+        .stderr(predicate::str::contains(format!(
+            "Usage: grper{EXE_SUFFIX} <PATH>"
+        )));
 }
 
 /// Make the single entry in a one-entry archive claim more data than it has,
