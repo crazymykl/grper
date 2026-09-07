@@ -37,6 +37,11 @@ struct Args {
     /// Abort without extracting if any warnings are raised.
     #[arg(long)]
     strict: bool,
+
+    /// Print the entries that would be extracted without creating or writing
+    /// anything.
+    #[arg(long)]
+    dry_run: bool,
 }
 
 /// Forwards to [`cli_main`] and exits with a status code.
@@ -48,7 +53,13 @@ fn main() {
 /// failure, and return the process exit code.
 fn cli_main(args: &[String]) -> i32 {
     match Args::try_parse_from(args) {
-        Ok(args) => match run(&args.path, &args.out_dir, &args.files, args.strict) {
+        Ok(args) => match run(
+            &args.path,
+            &args.out_dir,
+            &args.files,
+            args.strict,
+            args.dry_run,
+        ) {
             Ok(()) => 0,
             Err(err) => {
                 eprintln!("grper: {err:?}");
@@ -108,9 +119,16 @@ fn pick(names: &[&str], only: &[String]) -> Result<Selection> {
 }
 
 /// Load `path` and extract it (see [`run_with`]).
-fn run(path: &Path, out_dir: &Path, only: &[String], strict: bool) -> Result<()> {
+fn run(path: &Path, out_dir: &Path, only: &[String], strict: bool, dry_run: bool) -> Result<()> {
     let data = std::fs::read(path).with_context(|| format!("failed to read {path:?}"))?;
-    run_with(grper::FlakyReader::new(data), path, out_dir, only, strict)
+    run_with(
+        grper::FlakyReader::new(data),
+        path,
+        out_dir,
+        only,
+        strict,
+        dry_run,
+    )
 }
 
 /// Extract a GRP archive from `reader` into `out_dir`, where `label` is the
@@ -121,13 +139,17 @@ fn run(path: &Path, out_dir: &Path, only: &[String], strict: bool) -> Result<()>
 /// archive's spelling). Files are written under the archive's spelling of
 /// their names, and an entry whose data runs short of its declared size is
 /// reported as a truncated archive. When `strict` is set, any warning aborts
-/// the extraction before `out_dir` is created or any file is written.
+/// the extraction before `out_dir` is created or any file is written. With
+/// `dry_run` the archive is opened and the selection resolved (including the
+/// warnings and the strict check) but nothing is created or written; instead
+/// the entries that would be extracted are printed.
 fn run_with<R: Read + Seek>(
     reader: R,
     label: &Path,
     out_dir: &Path,
     only: &[String],
     strict: bool,
+    dry_run: bool,
 ) -> Result<()> {
     let mut archive =
         Archive::new(reader).with_context(|| format!("{label:?} is not a valid GRP archive"))?;
@@ -146,7 +168,7 @@ fn run_with<R: Read + Seek>(
         );
     }
 
-    if !out_dir.is_dir() {
+    if !dry_run && !out_dir.is_dir() {
         std::fs::create_dir_all(out_dir)
             .with_context(|| format!("failed to create {out_dir:?}"))?;
     }
@@ -166,6 +188,11 @@ fn run_with<R: Read + Seek>(
             _ => bail!("refusing to extract entry with unsafe path {name:?} into {out_dir:?}"),
         }
 
+        if dry_run {
+            println!("{name:<12} {} bytes", meta.size());
+            continue;
+        }
+
         let out = out_dir.join(name);
         let mut out_file =
             File::create(&out).with_context(|| format!("failed to create {out:?}"))?;
@@ -182,7 +209,12 @@ fn run_with<R: Read + Seek>(
         println!("{name:<12} {} bytes", written);
     }
     println!(
-        "extracted {} file(s) from {label:?} to {out_dir:?}",
+        "{} {} file(s) from {label:?} to {out_dir:?}",
+        if dry_run {
+            "would extract"
+        } else {
+            "extracted"
+        },
         selection.indices.len()
     );
     Ok(())
@@ -230,7 +262,7 @@ mod tests {
             build_grp(&[("A.TXT", b"123"), ("B.CON", b"45")]),
         );
         // `dir` already exists, so the create-dir path is skipped.
-        run(&grp, dir.path(), &[], false).expect("extracts all");
+        run(&grp, dir.path(), &[], false, false).expect("extracts all");
         assert_eq!(
             std::fs::read(dir.path().join("A.TXT")).expect("reads A.TXT"),
             b"123"
@@ -251,7 +283,7 @@ mod tests {
         );
         // `out` does not exist yet, so it must be created.
         let out = dir.path().join("out");
-        run(&grp, &out, &["defs.con".to_owned()], false).expect("extracts selection");
+        run(&grp, &out, &["defs.con".to_owned()], false, false).expect("extracts selection");
         assert_eq!(
             std::fs::read(out.join("DEFS.CON")).expect("reads DEFS.CON"),
             b"abc"
@@ -275,7 +307,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("scratch dir");
         let grp = grp_path(dir.path(), "empty.grp", build_grp(&[]));
         let out = dir.path().join("out");
-        run(&grp, &out, &[], false).expect("no entries to extract");
+        run(&grp, &out, &[], false, false).expect("no entries to extract");
         assert!(out.is_dir());
         assert!(out.read_dir().expect("reads out").count() == 0);
     }
@@ -284,7 +316,7 @@ mod tests {
     fn run_should_error_when_a_requested_name_is_missing() {
         let dir = tempfile::tempdir().expect("scratch dir");
         let grp = grp_path(dir.path(), "miss.grp", build_grp(&[("A.TXT", b"1")]));
-        let err = run(&grp, dir.path(), &["MISS.CON".to_owned()], false).unwrap_err();
+        let err = run(&grp, dir.path(), &["MISS.CON".to_owned()], false, false).unwrap_err();
         assert!(err.to_string().contains("MISS.CON"));
     }
 
@@ -292,7 +324,7 @@ mod tests {
     fn run_should_error_when_the_archive_is_not_valid_grp() {
         let dir = tempfile::tempdir().expect("scratch dir");
         let grp = grp_path(dir.path(), "bad.grp", b"definitely not a grp file".to_vec());
-        let err = run(&grp, dir.path(), &[], false).unwrap_err();
+        let err = run(&grp, dir.path(), &[], false, false).unwrap_err();
         assert!(err.to_string().contains("not a valid GRP archive"));
     }
 
@@ -303,6 +335,7 @@ mod tests {
             dir.path().join("missing.grp").as_path(),
             dir.path(),
             &[],
+            false,
             false,
         )
         .unwrap_err();
@@ -316,7 +349,7 @@ mod tests {
         // A file where the out dir wants to be: creation must fail.
         let blocked = dir.path().join("blocked");
         std::fs::write(&blocked, []).expect("creates blocker");
-        let err = run(&grp, blocked.join("in").as_path(), &[], false).unwrap_err();
+        let err = run(&grp, blocked.join("in").as_path(), &[], false, false).unwrap_err();
         assert!(err.to_string().contains("failed to create"));
     }
 
@@ -328,7 +361,7 @@ mod tests {
         std::fs::create_dir_all(&out).expect("creates out");
         // A directory where the output file wants to be: create must fail.
         std::fs::create_dir(out.join("A.TXT")).expect("creates blocker dir");
-        let err = run(&grp, &out, &[], false).unwrap_err();
+        let err = run(&grp, &out, &[], false, false).unwrap_err();
         assert!(err.to_string().contains("failed to create"));
     }
 
@@ -337,7 +370,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("scratch dir");
         // A name with a separator is not a single ordinary component.
         let grp = grp_path(dir.path(), "deep.grp", build_grp(&[("A/B.TXT", b"1")]));
-        let err = run(&grp, dir.path(), &["A/B.TXT".to_owned()], false).unwrap_err();
+        let err = run(&grp, dir.path(), &["A/B.TXT".to_owned()], false, false).unwrap_err();
         assert!(err.to_string().contains("unsafe path"));
     }
 
@@ -354,6 +387,7 @@ mod tests {
             Path::new("short.grp"),
             dir.path(),
             &[],
+            false,
             false,
         )
         .unwrap_err();
@@ -372,6 +406,7 @@ mod tests {
             dir.path(),
             &[],
             false,
+            false,
         )
         .unwrap_err();
         assert!(err.to_string().contains("failed to extract"));
@@ -388,6 +423,7 @@ mod tests {
             Path::new("once.grp"),
             dir.path(),
             &[],
+            false,
             false,
         )
         .unwrap_err();
@@ -407,6 +443,7 @@ mod tests {
             dir.path(),
             &[],
             false,
+            false,
         )
         .unwrap_err();
         assert!(err.to_string().contains("failed to extract"));
@@ -423,6 +460,7 @@ mod tests {
             Path::new("end.grp"),
             dir.path(),
             &[],
+            false,
             false,
         )
         .unwrap_err();
@@ -443,6 +481,7 @@ mod tests {
             &out,
             &[],
             false,
+            false,
         )
         .expect("extracts despite failing position seeks");
         assert_eq!(
@@ -458,7 +497,7 @@ mod tests {
         // `defs.con` differs in case, which raises a warning; in strict mode
         // that must abort the extraction.
         let out = dir.path().join("out");
-        let err = run(&grp, &out, &["defs.con".to_owned()], true).unwrap_err();
+        let err = run(&grp, &out, &["defs.con".to_owned()], true, false).unwrap_err();
         assert!(err.to_string().contains("--strict mode"));
         // Aborted before `out_dir` was created, so nothing was written.
         assert!(!out.exists());
@@ -471,11 +510,50 @@ mod tests {
         // The requested case matches the stored spelling, so no warning is
         // raised and strict mode proceeds normally.
         let out = dir.path().join("out");
-        run(&grp, &out, &["DEFS.CON".to_owned()], true).expect("extracts in strict mode");
+        run(&grp, &out, &["DEFS.CON".to_owned()], true, false).expect("extracts in strict mode");
         assert_eq!(
             std::fs::read(out.join("DEFS.CON")).expect("reads DEFS.CON"),
             b"abc"
         );
+    }
+
+    #[test]
+    fn run_dry_run_should_not_create_the_out_dir_or_write_files() {
+        let dir = tempfile::tempdir().expect("scratch dir");
+        let grp = grp_path(
+            dir.path(),
+            "dry.grp",
+            build_grp(&[("A.TXT", b"123"), ("B.CON", b"45")]),
+        );
+        // `out` does not exist; a dry run must report the entries without
+        // creating the directory or writing any file.
+        let out = dir.path().join("out");
+        run(&grp, &out, &[], false, true).expect("dry run succeeds");
+        assert!(!out.exists());
+    }
+
+    #[test]
+    fn run_dry_run_should_still_error_when_a_name_is_missing() {
+        let dir = tempfile::tempdir().expect("scratch dir");
+        let grp = grp_path(dir.path(), "miss.grp", build_grp(&[("A.TXT", b"1")]));
+        let out = dir.path().join("out");
+        // Selection is resolved before anything is written, so a dry run
+        // still rejects a name that is not in the archive.
+        let err = run(&grp, &out, &["MISS.CON".to_owned()], false, true).unwrap_err();
+        assert!(err.to_string().contains("MISS.CON"));
+        assert!(!out.exists());
+    }
+
+    #[test]
+    fn run_dry_run_should_abort_in_strict_mode_when_a_warning_is_raised() {
+        let dir = tempfile::tempdir().expect("scratch dir");
+        let grp = grp_path(dir.path(), "sel.grp", build_grp(&[("DEFS.CON", b"abc")]));
+        // The case mismatch raises a warning; with `--strict` a dry run still
+        // aborts, leaving nothing behind.
+        let out = dir.path().join("out");
+        let err = run(&grp, &out, &["defs.con".to_owned()], true, true).unwrap_err();
+        assert!(err.to_string().contains("--strict mode"));
+        assert!(!out.exists());
     }
 
     #[test]
@@ -570,6 +648,23 @@ mod tests {
         ];
         assert_eq!(cli_main(&args), 0);
         assert_eq!(std::fs::read(out.join("A.TXT")).expect("reads A.TXT"), b"1");
+    }
+
+    #[test]
+    fn cli_main_should_return_zero_on_a_dry_run_without_writing() {
+        let dir = tempfile::tempdir().expect("scratch dir");
+        let grp = grp_path(dir.path(), "ok.grp", build_grp(&[("A.TXT", b"1")]));
+        let out = dir.path().join("out");
+        // `--dry-run` is parsed by clap and leaves nothing on disk.
+        let args = vec![
+            "grper".to_owned(),
+            grp.to_string_lossy().into_owned(),
+            "-o".to_owned(),
+            out.to_string_lossy().into_owned(),
+            "--dry-run".to_owned(),
+        ];
+        assert_eq!(cli_main(&args), 0);
+        assert!(!out.exists());
     }
 
     #[test]
