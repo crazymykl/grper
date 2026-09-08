@@ -2,7 +2,7 @@ use std::io;
 
 use thiserror::Error;
 
-/// Errors returned when opening or reading a GRP archive.
+/// Errors returned when opening, reading, or writing a GRP archive.
 #[derive(Debug, Error)]
 pub enum Error {
     /// The first 12 bytes of the file are not the `"KenSilverman"` signature.
@@ -45,6 +45,22 @@ pub enum Error {
     #[error("no entry named {name:?} in archive")]
     EntryNotFound {
         /// The requested name.
+        name: String,
+    },
+
+    /// A file name is longer than the 12 bytes the format can store.
+    #[error("file name {name:?} is too long; GRP names are limited to {max} bytes")]
+    NameTooLong {
+        /// The offending file name.
+        name: String,
+        /// The maximum name length in bytes.
+        max: usize,
+    },
+
+    /// A file name contains a NUL byte, which the format cannot store.
+    #[error("file name {name:?} contains a NUL byte")]
+    NameContainsNull {
+        /// The offending file name.
         name: String,
     },
 

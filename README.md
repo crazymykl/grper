@@ -96,6 +96,43 @@ file.read_to_end(&mut contents)?;
 into any `Write` target without borrowing the archive — that is what the
 bundled CLI uses.
 
+### Writing
+
+`grper` can also build and extend archives through
+[`Writer`](https://docs.rs/grper/latest/grper/struct.Writer.html). Create a
+fresh archive with `Writer::new`, or open one for appending with
+`Writer::open` (which carries the existing files through). Stage files with
+`add_file`, then call `finish` to write the header, file table, and data and
+take back the target:
+
+```rust
+use std::io::{Cursor, Read, Seek, Write};
+use grper::{Archive, Writer};
+
+// Create an archive with two files.
+let mut out = Cursor::new(Vec::new());
+{
+    let mut w = Writer::new(&mut out)?;
+    w.add_file("DEFS.CON", b"def")?;
+    w.add_file("HELLO.TXT", b"world")?;
+    w.finish()?;
+}
+
+// Append to it: the existing files are carried through and rewritten ahead
+// of the new one.
+{
+    let mut w = Writer::open(&mut out)?;
+    w.add_file("EXTRA.BIN", &[1, 2, 3])?;
+    w.finish()?;
+}
+
+let archive = Archive::new(Cursor::new(out.into_inner()))?;
+assert_eq!(archive.len(), 3);
+```
+
+File names must be at most 12 bytes and must not contain a NUL byte; anything
+else is rejected with a `grper::Error`.
+
 Errors are returned as `grper::Error`, a `thiserror` enum distinguishing a bad
 signature, a file too small for the header, a truncated table or data region,
 an out-of-range index, a missing name, and underlying I/O errors.
@@ -105,7 +142,7 @@ an out-of-range index, a missing name, and underlying I/O errors.
 | Feature    | Default | Effect                                             |
 | ---------- | :-----: | -------------------------------------------------- |
 | `cli`      | yes     | Builds the `grper` extraction binary.              |
-| `testutil` | no      | Exposes `FlakyReader`, a test double for injecting I/O errors. |
+| `testutil` | no      | Exposes the `FlakyReader` and `FlakyWriter` test doubles for injecting I/O errors. |
 
 To use the library only, drop the CLI:
 

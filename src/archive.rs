@@ -211,15 +211,184 @@ fn parse_name(raw: &[u8]) -> String {
     String::from_utf8_lossy(&raw[..end]).into_owned()
 }
 
+/// The maximum length of a file name, in bytes: the 12-byte name field.
+const MAX_NAME_LEN: usize = 12;
+
+/// Staged file data: its name and its bytes.
+#[derive(Debug)]
+struct FileData {
+    name: String,
+    data: Vec<u8>,
+}
+
+/// Validate a file name against the format's limits.
+fn validate_name(name: &str) -> Result<(), Error> {
+    if name.len() > MAX_NAME_LEN {
+        return Err(Error::NameTooLong {
+            name: name.to_owned(),
+            max: MAX_NAME_LEN,
+        });
+    }
+    if name.bytes().any(|b| b == 0) {
+        return Err(Error::NameContainsNull {
+            name: name.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// A GRP archive being written: staged file data plus the target it will be
+/// written to.
+///
+/// Build an archive with [`Writer::new`] (a fresh archive) or [`Writer::open`]
+/// (an existing archive whose files are carried through), stage files with
+/// [`Writer::add_file`], then call [`Writer::finish`] to write the header,
+/// file table, and data, and take back the target.
+///
+/// Names must be at most 12 bytes and must not contain a NUL byte. Appending
+/// to an archive means opening it, staging files, and finishing: the existing
+/// files are rewritten, in order, ahead of the newly staged ones.
+///
+/// # Examples
+///
+/// ```
+/// use std::io::{Cursor, Read, Seek, Write};
+/// use grper::{Archive, Writer};
+///
+/// // Create an archive with two files.
+/// let mut w = Cursor::new(Vec::new());
+/// let mut writer = Writer::new(&mut w);
+/// writer.add_file("HELLO.TXT", b"world")?;
+/// writer.add_file("DEF.CON", b"def")?;
+/// writer.finish()?;
+/// let bytes = w.into_inner();
+///
+/// // A writer can open the archive it produced and append to it.
+/// let mut w = Cursor::new(bytes);
+/// let mut writer = Writer::open(&mut w)?;
+/// writer.add_file("EXTRA.BIN", &[1, 2, 3])?;
+/// writer.finish()?;
+///
+/// let archive = Archive::new(Cursor::new(w.into_inner()))?;
+/// assert_eq!(archive.len(), 3);
+/// # Ok::<(), grper::Error>(())
+/// ```
+#[derive(Debug)]
+pub struct Writer<W> {
+    target: W,
+    files: Vec<FileData>,
+}
+
+impl<W: Read + Seek + Write> Writer<W> {
+    /// Start a fresh archive to write into `target`.
+    ///
+    /// The target's existing content is overwritten when [`finish`](Self::finish)
+    /// is called, so point this at an empty target.
+    pub fn new(target: W) -> Self {
+        Self {
+            target,
+            files: Vec::new(),
+        }
+    }
+
+    /// Open an existing archive for appending: `target` must hold a valid GRP
+    /// archive, whose files are carried through and rewritten by
+    /// [`finish`](Self::finish) ahead of any newly staged files.
+    pub fn open(mut target: W) -> Result<Self, Error> {
+        // Read the existing files into memory while the target is still
+        // borrowed by `archive`, then drop `archive` so the target can be
+        // moved into the writer.
+        let files = {
+            let mut archive = Archive::new(&mut target)?;
+            (0..archive.len())
+                .map(|index| {
+                    let entry = archive.entries()[index].clone();
+                    let mut data = Vec::with_capacity(entry.size() as usize);
+                    archive.extract(index, &mut data)?;
+                    Ok(FileData {
+                        name: entry.name().to_owned(),
+                        data,
+                    })
+                })
+                .collect::<Result<_, Error>>()?
+        };
+        Ok(Self { target, files })
+    }
+
+    /// Stage a file for the archive under `name`.
+    pub fn add_file(&mut self, name: &str, data: &[u8]) -> Result<(), Error> {
+        validate_name(name)?;
+        self.files.push(FileData {
+            name: name.to_owned(),
+            data: data.to_vec(),
+        });
+        Ok(())
+    }
+
+    /// Write the header, file table, and data to the target and return it.
+    ///
+    /// The archive is rewritten from the beginning, so the target's position
+    /// is reset to the start first (after [`open`](Self::open) the reader has
+    /// been left past the old data).
+    pub fn finish(mut self) -> Result<W, Error> {
+        self.target.seek(SeekFrom::Start(0)).map_err(Error::from)?;
+        let mut header = [0u8; HEADER_LEN];
+        header[..SIGNATURE.len()].copy_from_slice(SIGNATURE);
+        header[SIGNATURE.len()..].copy_from_slice(&(self.files.len() as u32).to_le_bytes());
+        self.target.write_all(&header).map_err(Error::from)?;
+
+        for file in &self.files {
+            let mut record = [0u8; ENTRY_LEN];
+            record[..file.name.len()].copy_from_slice(file.name.as_bytes());
+            record[12..16].copy_from_slice(&(file.data.len() as u32).to_le_bytes());
+            self.target.write_all(&record).map_err(Error::from)?;
+        }
+
+        // The data starts right after the table just written, so no further
+        // positioning is needed: the staged order matches the written order.
+        for file in &self.files {
+            self.target.write_all(&file.data).map_err(Error::from)?;
+        }
+        self.target.flush().map_err(Error::from)?;
+        Ok(self.target)
+    }
+}
+
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
-    use crate::testutil::FlakyReader;
+    use crate::testutil::{FlakyReader, FlakyWriter};
     use std::{
         assert_matches,
         io::{BufReader, Cursor},
     };
+
+    /// Data for a single-entry archive starts right after the 16-byte header
+    /// plus the one 16-byte table entry.
+    const DATA_START: u64 = 32;
+
+    /// Parse `bytes` and return each file as a `(name, data)` pair, in order.
+    fn files_of(bytes: Vec<u8>) -> Vec<(String, Vec<u8>)> {
+        let mut archive = Archive::new(Cursor::new(bytes)).expect("valid archive");
+        let names: Vec<String> = archive
+            .entries()
+            .iter()
+            .map(|e| e.name().to_owned())
+            .collect();
+        names
+            .iter()
+            .map(|name| {
+                let mut data = Vec::new();
+                archive
+                    .entry_by_name(name)
+                    .expect("entry opens")
+                    .read_to_end(&mut data)
+                    .expect("reads file");
+                (name.clone(), data)
+            })
+            .collect()
+    }
 
     fn build_grp(files: &[(&str, &[u8])]) -> Vec<u8> {
         let mut buf = Vec::new();
@@ -505,6 +674,238 @@ mod tests {
         let mut archive = Archive::new(FlakyReader::new(data).failing_reads_from(32))
             .expect("open succeeds; the failure is in the extraction read");
         let err = archive.extract(0, &mut Vec::new()).unwrap_err();
+        assert_matches!(err, Error::Io(_));
+    }
+
+    #[test]
+    fn writer_new_should_create_an_empty_archive() {
+        let bytes = Writer::new(Cursor::new(Vec::new()))
+            .finish()
+            .unwrap()
+            .into_inner();
+        assert_eq!(bytes, build_grp(&[]));
+    }
+
+    #[test]
+    fn writer_new_should_write_files_in_order() {
+        let mut writer = Writer::new(Cursor::new(Vec::new()));
+        writer.add_file("A.TXT", b"12345").unwrap();
+        writer.add_file("B.CON", b"45").unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        assert_eq!(bytes, build_grp(&[("A.TXT", b"12345"), ("B.CON", b"45")]));
+    }
+
+    #[test]
+    fn writer_new_should_write_empty_file_data() {
+        let mut writer = Writer::new(Cursor::new(Vec::new()));
+        writer.add_file("A.TXT", b"").unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        assert_eq!(bytes, build_grp(&[("A.TXT", b"")]));
+    }
+
+    #[test]
+    fn writer_new_should_write_a_full_length_name_without_null() {
+        // A 12-byte name fills the field and has no room for a NUL terminator.
+        let mut writer = Writer::new(Cursor::new(Vec::new()));
+        writer.add_file("ABCDEFGHIJKL", b"xyz").unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        assert_eq!(
+            files_of(bytes),
+            vec![("ABCDEFGHIJKL".to_owned(), b"xyz".to_vec())]
+        );
+    }
+
+    #[test]
+    fn writer_add_file_should_reject_names_that_are_too_long() {
+        let mut writer = Writer::new(Cursor::new(Vec::new()));
+        let err = writer.add_file("ABCDEFGHIJKLM", b"1").unwrap_err();
+        assert_matches!(err, Error::NameTooLong { .. });
+    }
+
+    #[test]
+    fn writer_add_file_should_reject_names_containing_a_null() {
+        let mut writer = Writer::new(Cursor::new(Vec::new()));
+        let err = writer.add_file("A\0.TXT", b"1").unwrap_err();
+        assert_matches!(err, Error::NameContainsNull { .. });
+    }
+
+    #[test]
+    fn writer_finish_should_handle_an_empty_archive() {
+        // Finishing with no staged files writes just the header; the table
+        // and data loops are entered zero times.
+        let writer = Writer::new(FlakyWriter::new(Vec::new()));
+        assert!(writer.finish().is_ok());
+    }
+
+    #[test]
+    fn writer_finish_should_succeed_when_position_seeks_fail() {
+        // `finish` only issues a Start seek, so a position-seek failure is
+        // harmless.
+        let mut writer = Writer::new(FlakyWriter::new(Vec::new()).failing_position_seeks());
+        writer.add_file("A.TXT", b"1").unwrap();
+        assert!(writer.finish().is_ok());
+    }
+
+    #[test]
+    fn writer_finish_should_succeed_when_end_seeks_fail() {
+        // `finish` only issues a Start seek, so a failing End seek is
+        // harmless.
+        let mut writer = Writer::new(FlakyWriter::new(Vec::new()).failing_end_seeks());
+        writer.add_file("A.TXT", b"1").unwrap();
+        assert!(writer.finish().is_ok());
+    }
+
+    #[test]
+    fn writer_finish_should_propagate_header_write_errors() {
+        let mut writer = Writer::new(FlakyWriter::new(Vec::new()).failing_writes_at(0));
+        writer.add_file("A.TXT", b"1").unwrap();
+        let err = writer.finish().unwrap_err();
+        assert_matches!(err, Error::Io(_));
+    }
+
+    #[test]
+    fn writer_finish_should_propagate_table_write_errors() {
+        // The 16-byte header writes cleanly; the first table record, issued at
+        // position 16, fails.
+        let mut writer =
+            Writer::new(FlakyWriter::new(Vec::new()).failing_writes_at(HEADER_LEN as u64));
+        writer.add_file("A.TXT", b"1").unwrap();
+        let err = writer.finish().unwrap_err();
+        assert_matches!(err, Error::Io(_));
+    }
+
+    #[test]
+    fn writer_finish_should_propagate_data_write_errors() {
+        // Header and table write cleanly; data for a one-entry archive begins
+        // at 16 (header) + 16 (entry) = 32.
+        let mut writer = Writer::new(FlakyWriter::new(Vec::new()).failing_writes_at(DATA_START));
+        writer.add_file("A.TXT", b"1").unwrap();
+        let err = writer.finish().unwrap_err();
+        assert_matches!(err, Error::Io(_));
+    }
+
+    #[test]
+    fn writer_finish_should_propagate_flush_errors() {
+        let mut writer = Writer::new(FlakyWriter::new(Vec::new()).failing_flush());
+        writer.add_file("A.TXT", b"1").unwrap();
+        let err = writer.finish().unwrap_err();
+        assert_matches!(err, Error::Io(_));
+    }
+
+    #[test]
+    fn writer_finish_should_propagate_start_seek_errors() {
+        let mut writer = Writer::new(FlakyWriter::new(Vec::new()).failing_start_seeks());
+        writer.add_file("A.TXT", b"1").unwrap();
+        let err = writer.finish().unwrap_err();
+        assert_matches!(err, Error::Io(_));
+    }
+
+    #[test]
+    fn writer_open_should_load_an_existing_archive() {
+        let existing = build_grp(&[("A.TXT", b"123"), ("B.CON", b"45")]);
+        let writer = Writer::open(Cursor::new(existing.clone())).unwrap();
+        // Opening stages the existing files; finishing without adding any
+        // rewrites them byte for byte.
+        let bytes = writer.finish().unwrap().into_inner();
+        assert_eq!(bytes, existing);
+    }
+
+    #[test]
+    fn writer_open_should_handle_an_empty_archive() {
+        let existing = build_grp(&[]);
+        let writer = Writer::open(Cursor::new(existing.clone())).unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        assert_eq!(bytes, existing);
+    }
+
+    #[test]
+    fn writer_open_should_handle_an_empty_archive_on_flaky_writer() {
+        // An empty archive is valid, so opening it stages zero files and the
+        // file-copying loop is entered zero times. `failing_start_seeks` is
+        // set so the opener's End probe takes the non-matching seek path.
+        let writer = Writer::open(FlakyWriter::new(build_grp(&[])).failing_start_seeks());
+        assert!(writer.is_ok());
+    }
+
+    #[test]
+    fn writer_open_should_stage_existing_files_on_flaky_writer() {
+        // A non-empty archive opened via a flaky target (no faults forced)
+        // runs the file-copying loop that stages the existing files.
+        let existing = build_grp(&[("A.TXT", b"123"), ("B.CON", b"45")]);
+        assert!(Writer::open(FlakyWriter::new(existing)).is_ok());
+    }
+
+    #[test]
+    fn writer_open_should_append_after_existing_files() {
+        let existing = build_grp(&[("A.TXT", b"123"), ("B.CON", b"45")]);
+        let mut writer = Writer::open(Cursor::new(existing)).unwrap();
+        writer.add_file("C.BIN", &[9, 8, 7]).unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        assert_eq!(
+            files_of(bytes),
+            vec![
+                ("A.TXT".to_owned(), b"123".to_vec()),
+                ("B.CON".to_owned(), b"45".to_vec()),
+                ("C.BIN".to_owned(), vec![9, 8, 7]),
+            ]
+        );
+    }
+
+    #[test]
+    fn writer_open_should_reject_a_missing_signature() {
+        // At least 16 bytes so the header is read in full and the signature
+        // is checked, but the wrong first twelve bytes.
+        let err = Writer::open(Cursor::new(b"this is not a grp archive".to_vec())).unwrap_err();
+        assert_matches!(err, Error::BadSignature { .. });
+    }
+
+    #[test]
+    fn writer_open_should_reject_a_file_shorter_than_header() {
+        let err = Writer::open(Cursor::new(vec![0u8; 5])).unwrap_err();
+        assert_matches!(err, Error::TooSmall(5));
+    }
+
+    #[test]
+    fn writer_open_should_propagate_header_read_errors() {
+        let existing = build_grp(&[("A.TXT", b"1")]);
+        let err = Writer::open(FlakyWriter::new(existing).failing_reads_at(0)).unwrap_err();
+        assert_matches!(err, Error::Io(_));
+    }
+
+    #[test]
+    fn writer_open_should_propagate_table_read_errors() {
+        // The header reads cleanly; the table read issued at position 16 fails.
+        let existing = build_grp(&[("A.TXT", b"1")]);
+        let err = Writer::open(FlakyWriter::new(existing).failing_reads_at(HEADER_LEN as u64))
+            .unwrap_err();
+        assert_matches!(err, Error::Io(_));
+    }
+
+    #[test]
+    fn writer_open_should_propagate_end_seek_errors() {
+        // The header and table parse; the End(0) probe that `Archive::new`
+        // issues to find the data region fails.
+        let existing = build_grp(&[("A.TXT", b"1")]);
+        let err = Writer::open(FlakyWriter::new(existing).failing_end_seeks()).unwrap_err();
+        assert_matches!(err, Error::Io(_));
+    }
+
+    #[test]
+    fn writer_open_should_propagate_position_seek_errors() {
+        // A very short buffer fails the header read with EOF, which then
+        // probes the position; that probe fails and propagates as I/O.
+        let err =
+            Writer::open(FlakyWriter::new(vec![0u8; 5]).failing_position_seeks()).unwrap_err();
+        assert_matches!(err, Error::Io(_));
+    }
+
+    #[test]
+    fn writer_open_should_propagate_extract_read_errors() {
+        // The archive opens, but reading the data of its first file (which
+        // starts at 32) fails.
+        let existing = build_grp(&[("A.TXT", b"12345")]);
+        let err =
+            Writer::open(FlakyWriter::new(existing).failing_reads_at(DATA_START)).unwrap_err();
         assert_matches!(err, Error::Io(_));
     }
 }

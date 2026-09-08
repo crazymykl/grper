@@ -10,7 +10,7 @@ repository = "https://github.com/crazymykl/grper"
 [features]
 default = ["cli"]
 cli = ["dep:anyhow", "dep:clap", "testutil"]
-# Exposes the `FlakyReader` test double (see `grper::testutil`).
+# Exposes the `FlakyReader` and `FlakyWriter` test doubles (see `grper::testutil`).
 testutil = []
 
 [dev-dependencies]
