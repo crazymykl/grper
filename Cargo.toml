@@ -9,7 +9,7 @@ repository = "https://github.com/crazymykl/grper"
 
 [features]
 default = ["cli"]
-cli = ["dep:anyhow", "dep:clap", "testutil"]
+cli = ["dep:anyhow", "dep:clap"]
 # Exposes the `FlakyReader` and `FlakyWriter` test doubles (see `grper::testutil`).
 testutil = []
 
@@ -18,6 +18,12 @@ testutil = []
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+
+# The binary's tests fault the archive's I/O, so they need the test doubles;
+# enabling the feature here keeps them out of a normal `cli` build. `default-features`
+# is off so this does not re-enable the `cli` feature in a `--no-default-features`
+# test build.
+grper = { path = ".", default-features = false, features = ["testutil"] }
 
 
 [lints.rust]

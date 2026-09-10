@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::{Read, Seek};
+use std::io::{Cursor, Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -196,14 +196,7 @@ fn pick(names: &[&str], only: &[String]) -> Result<Selection> {
 /// Load `path` and extract it (see [`run_with`]).
 fn run(path: &Path, out_dir: &Path, only: &[String], strict: bool, dry_run: bool) -> Result<()> {
     let data = std::fs::read(path).with_context(|| format!("failed to read {path:?}"))?;
-    run_with(
-        grper::FlakyReader::new(data),
-        path,
-        out_dir,
-        only,
-        strict,
-        dry_run,
-    )
+    run_with(Cursor::new(data), path, out_dir, only, strict, dry_run)
 }
 
 /// Extract a GRP archive from `reader` into `out_dir`, where `label` is the
@@ -329,7 +322,7 @@ fn create(archive: &Path, files: &[PathBuf], dry_run: bool) -> Result<()> {
 /// Load `archive` and replace or add files in it (see [`update_with`]).
 fn update(archive: &Path, files: &[PathBuf], dry_run: bool) -> Result<()> {
     let data = std::fs::read(archive).with_context(|| format!("failed to read {archive:?}"))?;
-    update_with(grper::FlakyReader::new(data), archive, files, dry_run)
+    update_with(Cursor::new(data), archive, files, dry_run)
 }
 
 /// Replace or add files in the GRP archive read from `reader`, where `archive`
@@ -443,14 +436,15 @@ fn read_all_entries<R: Read + Seek>(archive: &mut Archive<R>) -> Result<Vec<(Str
     Ok(files)
 }
 
-/// Write the GRP archive holding `plan` into `writer` and return it.
+/// Write the GRP archive holding `plan` into `writer` and return the target.
 ///
-/// `writer` is a [`grper::FlakyWriter`] so tests can fault the build (a name
-/// rejection from `add_file`, or an I/O error from `finish`).
-fn build_archive(
-    writer: grper::FlakyWriter,
+/// The target is generic so a test can hand in a faulted writer to exercise
+/// the build's error paths (a name rejection from `add_file`, or an I/O error
+/// from `finish`); production hands in an in-memory `Cursor`.
+fn build_archive<W: Read + Seek + Write>(
+    writer: W,
     plan: &[(String, Vec<u8>, Status)],
-) -> Result<grper::FlakyWriter> {
+) -> Result<W> {
     let mut writer = Writer::new(writer);
     for (name, data, _) in plan {
         writer.add_file(name, data)?;
@@ -466,7 +460,7 @@ fn build_archive(
 /// into place.
 fn commit_plan(plan: &[(String, Vec<u8>, Status)], archive: &Path) -> Result<()> {
     let temp = temp_path(archive);
-    let bytes = build_archive(grper::FlakyWriter::new(Vec::new()), plan)?.into_inner();
+    let bytes = build_archive(Cursor::new(Vec::new()), plan)?.into_inner();
     std::fs::write(&temp, bytes).with_context(|| format!("failed to create {temp:?}"))?;
     move_into_place(&temp, archive)
 }

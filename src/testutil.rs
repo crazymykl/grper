@@ -1,8 +1,8 @@
 //! Test doubles for exercising I/O error paths.
 //!
 //! This module is only compiled when it is needed: in unit tests, or when the
-//! `testutil` feature is enabled (which the `cli` feature does, so the binary
-//! can fail its own file I/O on demand).
+//! `testutil` feature is enabled. The binary's own tests enable the feature (via
+//! a dev-dependency) so they can fault the archive's I/O on demand.
 
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 
@@ -182,11 +182,6 @@ impl FlakyWriter {
     pub fn failing_flush(mut self) -> Self {
         self.fail_flush = true;
         self
-    }
-
-    /// The bytes written so far.
-    pub fn into_inner(self) -> Vec<u8> {
-        self.inner.into_inner()
     }
 }
 
