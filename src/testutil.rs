@@ -183,6 +183,11 @@ impl FlakyWriter {
         self.fail_flush = true;
         self
     }
+
+    /// The bytes written so far.
+    pub fn into_inner(self) -> Vec<u8> {
+        self.inner.into_inner()
+    }
 }
 
 impl Write for FlakyWriter {

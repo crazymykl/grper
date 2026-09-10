@@ -19,8 +19,12 @@ Build or install the `grper` binary (feature `cli`, on by default):
 cargo install grper
 ```
 
-```
-Usage: grper <PATH> [FILE...] [--out-dir <OUT_DIR>] [--strict]
+The CLI has three subcommands: `extract`, `create`, and `update`.
+
+### `extract`
+
+```console
+$ grper extract <PATH> [FILE...] [-o <DIR>] [--strict] [--dry-run]
 ```
 
 Extracts the files of a GRP archive to disk.
@@ -33,7 +37,7 @@ Extracts the files of a GRP archive to disk.
   stored name warns on stderr:
 
   ```console
-  $ grper archive.grp defs.con -o out
+  $ grper extract archive.grp -o out defs.con
   warning: "defs.con" is stored in the archive as "DEFS.CON"
   ```
 
@@ -45,18 +49,51 @@ Extracts the files of a GRP archive to disk.
   or writing any file. Selection, warnings, and `--strict` are still applied,
   so a `--strict --dry-run` with a case mismatch aborts the same way.
 
+### `create`
+
+```console
+$ grper create <ARCHIVE> <FILE>... [--dry-run]
+```
+
+Builds a new GRP archive at `<ARCHIVE>`, which must not already exist (use
+`update` to modify an existing archive). Each source file's **base name**
+becomes its entry name.
+
+### `update`
+
+```console
+$ grper update <ARCHIVE> <FILE>... [--dry-run]
+```
+
+Replaces or adds files in an existing GRP archive. A source whose base name
+**exactly** matches a stored entry replaces that entry's data in place
+(keeping the stored spelling and position); any other source is appended. A
+base name that differs from a stored entry **only in case** is a hard error, as
+the format's 8.3 names do not distinguish case.
+
+`create` and `update` both take `--dry-run`, which prints the planned entries
+(with a `replaced`/`added` tag for `update`) without writing the archive or a
+temporary file.
+
 Examples:
 
 ```sh
 # Extract everything to the current directory.
-grper duke3d.grp
+grper extract duke3d.grp
 
 # Extract a couple of files to a specific directory.
-grper duke3d.grp -o out DEFS.CON sounds.lump
+grper extract duke3d.grp -o out DEFS.CON sounds.lump
+
+# Build a fresh archive from some files on disk.
+grper create new.grp defs.con hello.txt
+
+# Replace DEFS.CON in place and append an extra file.
+grper update new.grp defs.con extra.bin
 ```
 
 Exit status is `0` on success, `1` on a runtime error (missing archive,
-invalid archive, ...), and `2` on an argument error.
+invalid archive, a name that is a case-only duplicate, ...), and `2` on an
+argument error.
 
 ## Library
 
