@@ -208,5 +208,6 @@ Run the full suite (library, CLI in-process tests, and CLI subprocess tests):
 cargo test
 ```
 
-For coverage, `cargo llvm-cov --branch` reports 100% on lines, functions,
-regions, and branches, including the CLI.
+For coverage, `cargo llvm-cov --branch` is used, including the CLI. Line and
+function coverage is held to 100%; region and branch coverage are aimed for
+but not enforced, since they can be skewed by coverage-merge artifacts.
