@@ -224,3 +224,25 @@ impl Seek for FlakyWriter {
         self.inner.seek(pos)
     }
 }
+
+/// Build an in-memory GRP archive from `(name, data)` pairs, in order.
+///
+/// The synthetic archives the test suites feed the reader and writer never
+/// touch disk, so this is shared across them from here rather than
+/// duplicated in each.
+pub fn build_grp(files: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(b"KenSilverman");
+    buf.extend_from_slice(&(files.len() as u32).to_le_bytes());
+    for (name, data) in files {
+        let mut field = [0u8; 12];
+        let len = name.len().min(12);
+        field[..len].copy_from_slice(&name.as_bytes()[..len]);
+        buf.extend_from_slice(&field);
+        buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    }
+    for (_, data) in files {
+        buf.extend_from_slice(data);
+    }
+    buf
+}

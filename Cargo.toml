@@ -25,10 +25,6 @@ tempfile = "3"
 # test build.
 grper = { path = ".", default-features = false, features = ["testutil"] }
 
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
-
 [dependencies]
 thiserror = "2"
 

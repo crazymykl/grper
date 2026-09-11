@@ -8,6 +8,7 @@
 //! to check in and to run in CI.
 
 use assert_cmd::Command;
+use grper::build_grp;
 use predicates::prelude::*;
 use std::env::consts::EXE_SUFFIX;
 use std::path::{Path, PathBuf};
@@ -22,24 +23,6 @@ const FILES: &[(&str, &[u8])] = &[
     ("HELLO.TXT", b"hello"),
     ("DUB.MAP", b"map-bytes"),
 ];
-
-/// Build the byte layout of a GRP archive holding `files`.
-fn build_grp(files: &[(&str, &[u8])]) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(b"KenSilverman");
-    buf.extend_from_slice(&(files.len() as u32).to_le_bytes());
-    for (name, data) in files {
-        let mut field = [0u8; 12];
-        let len = name.len().min(12);
-        field[..len].copy_from_slice(&name.as_bytes()[..len]);
-        buf.extend_from_slice(&field);
-        buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
-    }
-    for (_, data) in files {
-        buf.extend_from_slice(data);
-    }
-    buf
-}
 
 /// Write a GRP archive holding `files` into `dir` and return its path.
 fn write_archive(dir: &Path, name: &str, files: &[(&str, &[u8])]) -> PathBuf {
