@@ -211,3 +211,16 @@ cargo test
 For coverage, `cargo llvm-cov --branch` is used, including the CLI. Line and
 function coverage is held to 100%; region and branch coverage are aimed for
 but not enforced, since they can be skewed by coverage-merge artifacts.
+
+A browsable report can be generated with `lcov` and `genhtml`:
+
+```sh
+cargo llvm-cov nextest --branch --lcov --output-path target/lcov.info
+genhtml target/lcov.info -o target/lcov-html --filter function,brace
+```
+
+The report lands in `target/lcov-html/index.html`. The `--filter function`
+option collapses each monomorphization into a single function, so the function
+column counts logical functions rather than instantiations (matching the
+`llvm-cov` summary); `--filter brace` trims bare-brace lines. A plain text
+summary is available with `lcov --summary target/lcov.info --filter function,brace`.
