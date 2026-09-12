@@ -1,8 +1,8 @@
 # grper
 
-Reader for Ken Silverman's **GRP** archive files, the uncompressed archive
-format used by Build engine games (Duke Nukem 3D, Redneck Rampage, Shadow
-Warrior, ...).
+Read and write Ken Silverman's **GRP** archive files, the uncompressed
+archive format used by Build engine games (Duke Nukem 3D, Redneck Rampage,
+Shadow Warrior, ...).
 
 `grper` exposes the files stored in a `.grp` archive:
 
@@ -178,7 +178,7 @@ an out-of-range index, a missing name, and underlying I/O errors.
 
 | Feature    | Default | Effect                                             |
 | ---------- | :-----: | -------------------------------------------------- |
-| `cli`      | yes     | Builds the `grper` extraction binary.              |
+| `cli`      | yes     | Builds the `grper` binary.                         |
 | `testutil` | no      | Exposes the `FlakyReader` and `FlakyWriter` test doubles for injecting I/O errors. |
 
 To use the library only, drop the CLI:
