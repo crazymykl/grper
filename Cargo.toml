@@ -1,16 +1,16 @@
 [package]
 name = "grper"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Mike MacDonald <crazymykl@gmail.com>"]
 edition = "2024"
 license = "GPL-3.0-or-later"
-description = "Reader for Ken Silverman's Build engine GRP archive files"
+description = "Read and write Ken Silverman's Build engine GRP archive files"
 repository = "https://github.com/crazymykl/grper"
 
 [features]
 default = ["cli"]
-cli = ["dep:anyhow", "dep:clap", "testutil"]
-# Exposes the `FlakyReader` test double (see `grper::testutil`).
+cli = ["dep:anyhow", "dep:clap"]
+# Exposes the `FlakyReader` and `FlakyWriter` test doubles (see `grper::testutil`).
 testutil = []
 
 [dev-dependencies]
@@ -19,9 +19,11 @@ assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
 
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
+# The binary's tests fault the archive's I/O, so they need the test doubles;
+# enabling the feature here keeps them out of a normal `cli` build. `default-features`
+# is off so this does not re-enable the `cli` feature in a `--no-default-features`
+# test build.
+grper = { path = ".", default-features = false, features = ["testutil"] }
 
 [dependencies]
 thiserror = "2"

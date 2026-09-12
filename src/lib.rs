@@ -44,22 +44,21 @@
 //!
 //! # Testing
 //!
-//! With the `testutil` feature, the [`FlakyReader`] test double is exposed so
-//! I/O error paths can be exercised without flaky hardware.
+//! With the `testutil` feature, the [`FlakyReader`] and [`FlakyWriter`] test
+//! doubles are exposed so I/O error paths can be exercised without flaky hardware.
 
 #![deny(missing_docs)]
-#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
 mod archive;
 mod error;
 mod file;
 
-#[cfg(any(test, feature = "testutil"))]
+#[cfg(feature = "testutil")]
 mod testutil;
 
-pub use archive::{Archive, Entry};
+pub use archive::{Archive, Entry, Writer};
 pub use error::Error;
 pub use file::File;
 
-#[cfg(any(test, feature = "testutil"))]
-pub use testutil::FlakyReader;
+#[cfg(feature = "testutil")]
+pub use testutil::{FlakyReader, FlakyWriter, build_grp};
